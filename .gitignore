@@ -1,0 +1,47 @@
+# Virtual Environment
+.venv/
+venv/
+env/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+.numba_cache/
+
+# IDE
+.idea/
+.vscode/
+
+# Project output
+output/
+output_*/
+debug_frames.csv
+debug_screenshots/
+*.log
+
+# Model weights (large files)
+weights/
+*.pt
+*.pth
+*.onnx
+
+# Video files (large files)
+*.mp4
+*.avi
+*.mov
+*.mkv
+
+# Temporary test files
+test_video*.mp4
+debug_*.jpg
+debug_*.mp4
+highlights*.mp4
+clips.txt
+benchmark_multiprocess.py
+inspect_*.py
+verify_*.py
+generate_debug_screenshots.py
+
+# Ultralytics config
+.ultralytics_config/
