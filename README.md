@@ -20,10 +20,12 @@ pip install -r requirements.txt
 本系统依赖预训练模型，请下载后放置在 `weights/` 目录下（如无该目录请自行创建）：
 
 *   **YOLOv8 (自动下载)**: 首次运行会自动下载 `yolov8n.pt`。
-*   **TrackNet (需手动下载)**: 
-    *   推荐使用 [TrackNetV2-pytorch](https://github.com/ChgygLin/TrackNetV2-pytorch) 的权重。
-    *   或者下载 [TrackNet (Tennis)](https://drive.google.com/file/d/1XEYZ4myUN7QT-NeBYJI0xteLsvs-ZAOl/view?usp=sharing) 权重重命名为 `tracknet.pth` 放入 `weights/` 目录。
-    *   *注意：如果未检测到权重文件，系统将使用随机权重运行（仅用于调试流程，无实际效果）。*
+*   **TrackNet (自动/手动下载)**:
+    *   **文件路径**: `weights/track.pt`
+    *   **来源仓库**: [TrackNetV2-pytorch](https://github.com/ChgygLin/TrackNetV2-pytorch)
+    *   **原始文件**: `tf2torch/track.pt`
+    *   **下载链接**: [点击下载](https://github.com/ChgygLin/TrackNetV2-pytorch/raw/main/tf2torch/track.pt)
+    *   *说明：运行 `setup_models.py` 可自动下载此权重。*
 
 ### 3. 运行参数说明
 
