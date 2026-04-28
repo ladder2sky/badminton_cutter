@@ -1,17 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+*.spec.bak
+
 # Virtual Environment
 .venv/
 venv/
 env/
 
-# Python cache
-__pycache__/
-*.py[cod]
-*$py.class
-.numba_cache/
-
 # IDE
 .idea/
 .vscode/
+*.swp
+*.swo
+*~
 
 # Project output
 output/
@@ -38,10 +46,22 @@ debug_*.jpg
 debug_*.mp4
 highlights*.mp4
 clips.txt
+
+# Temporary scripts
 benchmark_multiprocess.py
 inspect_*.py
 verify_*.py
 generate_debug_screenshots.py
 
-# Ultralytics config
+# Ultralytics
 .ultralytics_config/
+
+# Numba cache
+.numba_cache/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+Thumbs.db
