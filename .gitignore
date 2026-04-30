@@ -21,9 +21,9 @@ env/
 *.swo
 *~
 
-# Project output
-output/
-output_*/
+# Project output (root directory only)
+/output/
+/output_*/
 debug_frames.csv
 debug_screenshots/
 *.log
