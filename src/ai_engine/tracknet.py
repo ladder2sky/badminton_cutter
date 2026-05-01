@@ -104,7 +104,7 @@ class TrackNet(nn.Module):
         return x
 
 class ShuttlecockTracker:
-    def __init__(self, model_path=None, device='cpu', confidence_threshold=0.3):
+    def __init__(self, model_path=None, device='cpu', confidence_threshold=0.2):
         self.device = torch.device(device)
         self.model = TrackNet().to(self.device)
         self.model.eval()
@@ -124,67 +124,68 @@ class ShuttlecockTracker:
 
     def predict(self, frame):
         """
-        Input single frame, returns predicted shuttlecock coordinates (x, y).
-        Requires 3 accumulated frames to perform one prediction.
+        输入单帧图像，返回预测的羽毛球坐标 (x, y)。
+        需要累积 3 帧连续图像才能执行一次有效预测。
         """
-        # Preprocessing: Use input frame size directly
-        # Ensure dimensions are divisible by 32 (TrackNet has 3 pools => 8, but let's be safe for 32)
-        h, w = frame.shape[:2]
+        if frame is None:
+            return None, 0.0
+
+        # 1. 记录原始尺寸和模型目标尺寸
+        orig_h, orig_w = frame.shape[:2]
+        target_w, target_h = 512, 288
         
+        # 2. 图像预处理
         # Convert BGR to RGB
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         
-        # Resize to 512x288 (Standard TrackNet Input)
-        resized = cv2.resize(frame_rgb, (512, 288))
+        # 缩放到 TrackNet 标准输入尺寸 (512x288)
+        resized = cv2.resize(frame_rgb, (target_w, target_h))
         
-        # Normalize (Standard ImageNet normalization)
+        # 归一化到 [0, 1]
         processed = resized.astype(np.float32) / 255.0
-        # mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
-        # std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
-        # processed = (processed - mean) / std
         
         # HWC -> CHW (3, 288, 512)
         processed = np.transpose(processed, (2, 0, 1))
         
+        # 3. 维护 3 帧滑动窗口缓冲区
         self.frame_buffer.append(processed)
         
         if len(self.frame_buffer) > 3:
             self.frame_buffer.pop(0)
             
         if len(self.frame_buffer) < 3:
-                    return None, 0.0
+            # 缓冲区未满时返回空结果
+            return None, 0.0
             
-        # Concatenate 3 frames along channel dimension -> (9, 288, 512)
+        # 4. 模型推理
+        # 将 3 帧沿通道维度合并 -> (9, 288, 512)
         input_tensor = np.concatenate(self.frame_buffer, axis=0)
-        # Add batch dimension -> (1, 9, 288, 512)
+        # 添加 Batch 维度并发送到设备 -> (1, 9, 288, 512)
         input_tensor_torch = torch.from_numpy(input_tensor).unsqueeze(0).to(self.device)
         
         with torch.no_grad():
             output = self.model(input_tensor_torch) # (1, 256, 288, 512)
             
-        # Output is (1, 256, H, W). We want the class with highest probability per pixel.
-        # Since it's likely a regression-via-classification (0-255), 
-        # the 'class index' IS the heatmap intensity.
-        # So we take argmax along dim 1.
-        heatmap_class = torch.argmax(output, dim=1).float() # (1, 288, 512)
-        heatmap = heatmap_class[0].cpu().numpy() # (288, 512), values 0-255
+        # --- 修复逻辑开始 ---
+        # 1. 使用 Softmax 将输出转为概率分布 (沿通道维度)
+        probs = torch.softmax(output, dim=1) # (1, 256, 288, 512)
         
-        # Post-processing
-        # Find position of max value in the heatmap
-        # Use unravel_index to find the 2D index of the flattened max
-        y_idx, x_idx = np.unravel_index(heatmap.argmax(), heatmap.shape)
-        max_val = heatmap[y_idx, x_idx]
+        # 2. 我们关注代表“球”的特征层。
+        # 在该模型中，通常索引越高代表越接近球心。
+        # 我们取概率加权后的均值，或者直接取除背景外(索引>0)的最大概率映射
+        # 这里采用一种更鲁棒的方法：提取背景层(index 0)的相反面
+        ball_map = 1.0 - probs[0, 0, :, :].cpu().numpy() # (288, 512)
         
-        # Normalize confidence to 0-1
-        confidence = max_val / 255.0
+        # 3. 在这个 ball_map 中找最大值
+        y_idx, x_idx = np.unravel_index(ball_map.argmax(), ball_map.shape)
+        max_prob = ball_map[y_idx, x_idx]
         
-        # Debug print every 100 frames or if confidence is high
-        # if confidence > 0.01:
-        #      print(f"[TrackNet Debug] Max val: {max_val}, Conf: {confidence:.4f}, Pos: ({x_idx}, {y_idx})")
+        # 这里的 max_prob 才是真正的置信度 (0.0 - 1.0)
+        confidence = float(max_prob)
         
-        # Map back to original image coordinates
-        orig_h, orig_w = frame.shape[:2]
-        cx = int(x_idx * orig_w / w)
-        cy = int(y_idx * orig_h / h)
-        
+        # 4. 坐标映射
+        cx = int(x_idx * orig_w / target_w)
+        cy = int(y_idx * orig_h / target_h)
+        # --- 修复逻辑结束 ---
+
         return (cx, cy), confidence

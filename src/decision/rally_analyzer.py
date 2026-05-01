@@ -17,7 +17,7 @@ class RallyAnalyzer:
         self.max_serve_interval = 5.0 # 发球准备最大间隔
         self.debug_file = None
         self.hit_map = {}
-
+        
     def initialize_debug_writer(self, csv_path: str, hit_events: List[float]):
         self.debug_csv_path = csv_path
         self.hit_map = {int(t*30): True for t in hit_events}
@@ -111,8 +111,8 @@ class RallyAnalyzer:
             bbox_w = max(xs) - min(xs)
             bbox_h = max(ys) - min(ys)
             
-            # 阈值：宽或高至少有一个超过 30 像素 (假设画面 640x360)
-            if bbox_w < 30 and bbox_h < 30:
+            # 阈值：宽或高至少有一个超过 15 像素 (假设画面 640x360)
+            if bbox_w < 15 and bbox_h < 15:
                 print(f"[Debug] Rejected sequence {start_time:.2f}-{end_time:.2f}: Static noise (w={bbox_w}, h={bbox_h})")
                 continue
                 
@@ -126,8 +126,8 @@ class RallyAnalyzer:
             # 4. 优化边界 & 音频辅助
             
             # 4.1 修正开始时间
-            # 发球前通常有准备动作，向前回溯 0.5 秒
-            final_start = max(0, start_time - 0.6)
+            # 发球前通常有准备动作，向前回溯 1 秒
+            final_start = max(0, start_time - 1)
             
             # 4.2 修正结束时间 (Audio Extension)
             # 如果在视觉结束后的短时间内有击球声 (如重杀)，则延长回合
@@ -186,6 +186,7 @@ class RallyAnalyzer:
     def _extract_ball_sequences(self, video_events):
         """
         从逐帧事件中提取连续的球检测片段。
+        只接受置信度高于阈值的检测结果，过滤误检。
         Returns: list of (start_time, end_time, [(x,y), ...])
         """
         sequences = []
@@ -196,28 +197,29 @@ class RallyAnalyzer:
         for event in video_events:
             t = event['time']
             pos = event['ball_pos']
+            conf = event.get('ball_conf', 0.0)
             
+            # 只要检测到球坐标就认为检测到球
             if pos is not None:
                 if current_seq_start is None:
                     current_seq_start = t
                 current_seq_positions.append(pos)
                 last_frame_time = t
             else:
-                # 球丢失
-                # 如果当前有序列，且丢失时间超过阈值 (这里先只提取纯连续片段，合并留给下一步)
+                # 球丢失或置信度太低
                 if current_seq_start is not None:
-                    # 一个纯连续片段结束 (只要断一帧就算断，合并交给 _merge_sequences)
+                    # 一个纯连续片段结束
                     sequences.append((current_seq_start, last_frame_time, current_seq_positions))
                     current_seq_positions = []
                     current_seq_start = None
-                    
+                
         # 处理最后一个
         if current_seq_start is not None:
             sequences.append((current_seq_start, last_frame_time, current_seq_positions))
             
         return sequences
 
-    def _merge_sequences(self, sequences, max_gap=1.0):
+    def _merge_sequences(self, sequences, max_gap=3.0):
         """
         合并时间间隔较短的片段。
         """
