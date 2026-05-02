@@ -17,6 +17,91 @@ class RallyAnalyzer:
         self.max_serve_interval = 5.0 # 发球准备最大间隔
         self.debug_file = None
         self.hit_map = {}
+
+        # 状态定义，专为V3设计
+        self.STATE_IDLE = "IDLE"      # 垃圾时间/寻找发球
+        self.STATE_LOCKED = "LOCKED"  # 已满足双人静止2秒，等待起球
+        self.STATE_ACTIVE = "ACTIVE"  # 回合进行中
+        
+        self.current_state = self.STATE_IDLE
+        self.player_still_frames = 0
+        self.buffer_size = 30 # 假设30FPS，对应1秒缓冲区
+    
+    def _check_ball_lost(self, video_events, current_index, duration=30):
+        """
+        向后观察 duration 帧，如果球出现的频率低于 10%，则认为球已丢失
+        """
+        look_ahead = video_events[current_index : current_index + duration]
+        if not look_ahead:
+            return True
+        
+        ball_detected_count = sum(1 for e in look_ahead if e['ball_pos'] is not None)
+        return (ball_detected_count / len(look_ahead)) < 0.1 # 丢球阈值
+
+    def analyze_v3(self, video_events):
+        """
+        专为 TrackNet V3 优化的视觉状态机
+        """
+        rallies = []
+        active_start_time = None
+        
+        # 内部计数器
+        self.player_still_frames = 0
+        self.player_lost_grace = 0 # 容错计数器
+        self.current_state = self.STATE_IDLE
+        
+        for i, event in enumerate(video_events):
+            player_count = event['player_count']
+            ball_pos = event['ball_pos']
+            ball_speed = event.get('ball_speed', 0)
+            t = event['time']
+
+            # --- 1. 球员静止判定 (逻辑优化) ---
+            if player_count >= 2:
+                self.player_still_frames += 1
+                self.player_lost_grace = 0 # 重置容错
+            else:
+                # 如果人丢了，给 10 帧的容错时间，不立即重置 player_still_frames
+                self.player_lost_grace += 1
+                if self.player_lost_grace > 10: 
+                    self.player_still_frames = 0
+            
+            # --- 2. 状态机切换 ---
+            
+            # IDLE -> LOCKED: 满足 2 秒静止
+            if self.current_state == self.STATE_IDLE:
+                if self.player_still_frames > 60: # 30FPS * 2s
+                    self.current_state = self.STATE_LOCKED
+                    # print(f"[Debug] {t:.2f}s: State -> LOCKED (Players Ready)")
+
+            # LOCKED -> ACTIVE: 检测到起球 (速度突变)
+            elif self.current_state == self.STATE_LOCKED:
+                # 触发条件：球出现且速度大于阈值
+                if ball_pos and ball_speed > 15: 
+                    self.current_state = self.STATE_ACTIVE
+                    active_start_time = t - 1.0 # 包含 1s 准备动作
+                    # print(f"[Debug] {t:.2f}s: State -> ACTIVE (Serve Detected)")
+                
+                # 如果球员动了（静止中断），回退到 IDLE
+                elif self.player_still_frames == 0:
+                    self.current_state = self.STATE_IDLE
+
+            # ACTIVE -> IDLE: 判定回合结束
+            elif self.current_state == self.STATE_ACTIVE:
+                # 判定死球：未来 1 秒内基本没球，且当前帧也没球 (或球速极低)
+                if ball_pos is None or ball_speed < 2:
+                    if self._check_ball_lost(video_events, i, duration=30):
+                        end_time = t + 0.5 # 稍微延后一点点
+                        
+                        # 过滤太短的回合 (比如发球失误，不到 1.5 秒)
+                        if end_time - active_start_time > 1.5:
+                            rallies.append(ClipSegment(active_start_time, end_time, score=1.0))
+                            # print(f"[Debug] {t:.2f}s: Rally Found: {active_start_time:.2f} - {end_time:.2f}")
+                        
+                        self.current_state = self.STATE_IDLE
+                        self.player_still_frames = 0
+        
+        return self._merge_overlapping_rallies(rallies)
         
     def initialize_debug_writer(self, csv_path: str, hit_events: List[float]):
         self.debug_csv_path = csv_path
@@ -35,7 +120,7 @@ class RallyAnalyzer:
                 self.debug_file.write("frame_id,time,ball_x,ball_y,ball_conf,player_count,is_hit\n")
             except Exception as e:
                 print(f"[RallyAnalyzer] Error initializing debug CSV: {e}")
-        except Exception as e:
+        except Exception as e:        
              print(f"[RallyAnalyzer] Error initializing debug CSV: {e}")
 
     def write_debug_frame(self, event: Dict):
@@ -111,8 +196,8 @@ class RallyAnalyzer:
             bbox_w = max(xs) - min(xs)
             bbox_h = max(ys) - min(ys)
             
-            # 阈值：宽或高至少有一个超过 15 像素 (假设画面 640x360)
-            if bbox_w < 15 and bbox_h < 15:
+            # 阈值：宽或高至少有一个超过 30 像素 (假设画面 640x360)
+            if bbox_w < 30 and bbox_h < 30:
                 print(f"[Debug] Rejected sequence {start_time:.2f}-{end_time:.2f}: Static noise (w={bbox_w}, h={bbox_h})")
                 continue
                 
@@ -219,7 +304,7 @@ class RallyAnalyzer:
             
         return sequences
 
-    def _merge_sequences(self, sequences, max_gap=3.0):
+    def _merge_sequences(self, sequences, max_gap=1.0):
         """
         合并时间间隔较短的片段。
         """

@@ -54,7 +54,9 @@ python setup_models.py
 | 模型 | 文件路径 | 用途 |
 |------|---------|------|
 | YOLOv8-Nano | `weights/yolov8n.pt` | 运动员检测 |
-| TrackNet V2 | `weights/track.pt` | 羽毛球轨迹追踪 |
+| TrackNet V1 | `weights/track.pt` | 羽毛球轨迹追踪 V1|
+| TrackNet V3 | `weights/TrackNet_best.pt` | 羽毛球轨迹追踪 V3 |
+
 
 ### 3. 基本运行
 

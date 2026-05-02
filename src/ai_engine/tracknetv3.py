@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import cv2
 import numpy as np
-
+import collections
 import torch
 import torch.nn as nn
 
@@ -174,10 +174,10 @@ class BackgroundExtractor:
         return diff 
     
 class ShuttlecockTrackerV3:
-    def __init__(self, model_path, video_path, device='cuda', confidence_threshold=0.2):
+    def __init__(self, model_path, video_path, device='cuda', confidence_threshold=0.6):
         self.device = torch.device(device)
         self.confidence_threshold = confidence_threshold
-        
+        self.pos_history = collections.deque(maxlen=10) # 存储最近5帧的真实坐标
         # 修正：参数名改为 in_dim 以匹配你的 TrackNetV3 类定义
         self.model = TrackNetV3(in_dim=27, out_dim=8).to(self.device)
         
@@ -206,7 +206,7 @@ class ShuttlecockTrackerV3:
         适配 27通道输入 (9帧 RGB) 与 8通道输出的 TrackNetV3 推理方法
         """
         if frame is None:
-            return None, 0.0
+            return None, 0.0, 0.0
 
         orig_h, orig_w = frame.shape[:2]
         
@@ -223,7 +223,7 @@ class ShuttlecockTrackerV3:
             
         # 如果缓冲区没满 9 帧，无法进行推理
         if len(self.frame_buffer) < 9:
-            return None, 0.0
+            return None, 0.0, 0.0
 
         # 4. 构造 27 通道输入
         # 将 9 帧 (288, 512, 3) 在通道维度拼接 -> (288, 512, 27)
@@ -249,8 +249,28 @@ class ShuttlecockTrackerV3:
             cx = int(x_idx * orig_w / 512)
             cy = int(y_idx * orig_h / 288)
 
-            # 根据预设阈值过滤结果 (建议 V3 初始阈值设为 0.5，因为它通常更自信)
-            if confidence < self.confidence_threshold:
-                return (-1, -1), confidence
+            current_pos = None
+            speed = 0.0
 
-            return (cx, cy), confidence
+            # 只有高于阈值才更新轨迹[cite: 2, 4]
+            if confidence >= self.confidence_threshold:
+                current_pos = (cx, cy)
+                
+                # 计算与上一帧有效检测的距离 (像素/帧)
+                if len(self.pos_history) > 0:
+                    prev_pos = self.pos_history[-1]
+                    # 计算欧几里得距离
+                    dist = np.sqrt((cx - prev_pos[0])**2 + (cy - prev_pos[1])**2)
+                    
+                    # 简单物理过滤：如果一帧内球移动了超过 200 像素，极有可能是误检（跳点）
+                    if dist < 200:
+                        speed = dist
+                    else:
+                        current_pos = None # 判定为物理不可能的跳点
+                
+                if current_pos:
+                    self.pos_history.append(current_pos)
+                # 返回 (坐标), 置信度, 瞬时速度
+                return current_pos, confidence, speed
+            # 确保在“没检出球”的情况下，依然返回 3 个占位值，防止解包失败
+            return None, 0.0, 0.0
