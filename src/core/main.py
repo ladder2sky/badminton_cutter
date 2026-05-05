@@ -32,14 +32,15 @@ import argparse
 import collections
 
 class BadmintonCutterEngine:
-    def __init__(self, video_path, output_dir, use_gpu=False, max_frames=None, start_time=0, 
-                 camera_pos='center', skip_frames=0, generate_video=False, save_screenshots=False,
-                 model_version=1):
+    def __init__(self, video_path, output_dir, use_gpu=False, max_frames=None, start_time=0, end_time=None,
+                  camera_pos='center', skip_frames=0, generate_video=False, save_screenshots=False,
+                  model_version=1):
         self.video_path = video_path
         self.output_dir = output_dir
         self.use_gpu = use_gpu
         self.max_frames = max_frames
         self.start_time = start_time
+        self.end_time = end_time
         self.camera_pos = camera_pos
         self.skip_frames = skip_frames
         self.generate_video = generate_video
@@ -61,7 +62,8 @@ class BadmintonCutterEngine:
         # 0. 初始化模块
         device_str = 'cuda' if use_gpu else 'cpu'
         print(f"[Engine] Initializing modules on {device_str} using TrackNet V{model_version}...")
-        self.processor = VideoProcessor(video_path, resize_dim=self.inference_size)
+        self.processor = VideoProcessor(video_path, resize_dim=self.inference_size, 
+                                        start_time=self.start_time, end_time=self.end_time)
         self.detector = PlayerDetector(device=device_str)
         
         # 根据模型版本选择权重和加载器
@@ -138,6 +140,8 @@ class BadmintonCutterEngine:
                     "player_count": player_count
                 }
                 video_events.append(event_data)
+                # --- 新增：将这一帧的数据实时写入 CSV ---
+                self.rally_analyzer.write_debug_frame(event_data) 
                 
                 # 绘制预览图 (可选)
                 debug_frame = self.detector.draw_detections(small_frame, raw_detections)
@@ -162,7 +166,7 @@ class BadmintonCutterEngine:
 
         if self.model_version == 3:
             # V3 逻辑：以视觉状态机为主，音频作为打分或边界辅助 (暂不作为状态切换核心)
-            rallies = self.rally_analyzer.analyze_v3(video_events)
+            rallies = self.rally_analyzer.analyze_v3(video_events, fps=fps)
         else:
             # V1 逻辑：保留你原始的 analyze 方法，该方法强依赖 hit_events
             rallies = self.rally_analyzer.analyze(hit_events, video_events, cheer_events)
@@ -206,7 +210,8 @@ if __name__ == "__main__":
     parser.add_argument("--preview", action="store_true", default=True, help="Generate debug preview video")
     parser.add_argument("--max-frames", type=int, default=None, help="Max frames to process")
     parser.add_argument("--skip-frames", type=int, default=0, help="Skip frames at start")
-    parser.add_argument("--start-time", type=float, default=0.0, help="Start time in seconds")
+    parser.add_argument("--start-time", type=float, default=0.0, help="Start time in seconds (e.g., --start-time 60.0 to skip first 60 seconds)")
+    parser.add_argument("--end-time", type=float, default=None, help="End time in seconds (e.g., --end-time 300.0 to stop at 5 minutes). Default is video end.")
     parser.add_argument("--camera-pos", type=str, default="center", choices=["left", "center", "right"])
     parser.add_argument("--generate-video", action="store_true", help="Generate final highlights video")
     parser.add_argument("--save-screenshots", action="store_true", help="Save debug screenshots")
@@ -221,7 +226,8 @@ if __name__ == "__main__":
             output_dir=args.output, 
             use_gpu=args.gpu, 
             max_frames=args.max_frames, 
-            start_time=args.start_time, 
+            start_time=args.start_time,
+            end_time=args.end_time,
             camera_pos=args.camera_pos,
             skip_frames=args.skip_frames,
             generate_video=args.generate_video,

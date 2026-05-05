@@ -5,11 +5,13 @@ class VideoProcessor:
     """
     负责视频文件的读取、预处理（缩放、ROI裁剪）及基本信息获取。
     """
-    def __init__(self, video_path, resize_dim=None):
+    def __init__(self, video_path, resize_dim=None, start_time=0.0, end_time=None):
         """
         初始化视频处理器。
         :param video_path: 视频文件路径
         :param resize_dim: (width, height) 如果设置，输出帧将缩放到此尺寸
+        :param start_time: 开始处理的时间（秒），默认从视频开头开始
+        :param end_time: 结束处理的时间（秒），默认为视频末尾
         """
         self.video_path = video_path
         self.cap = cv2.VideoCapture(video_path)
@@ -25,8 +27,11 @@ class VideoProcessor:
         self.duration = self.total_frames / self.fps if self.fps > 0 else 0
         
         self.resize_dim = resize_dim
-        
+        self.start_time = start_time
+        self.end_time = end_time if end_time is not None else self.duration
+         
         print(f"[VideoProcessor] Video loaded: {self.width}x{self.height} @ {self.fps:.2f}fps, Duration: {self.duration:.2f}s")
+        print(f"[VideoProcessor] Processing range: {self.start_time:.2f}s - {self.end_time:.2f}s")
 
     def get_frame_generator(self):
         """
@@ -34,12 +39,23 @@ class VideoProcessor:
         :yield: (original_frame, processed_frame, frame_id)
                 original_frame: 原始分辨率图像
                 processed_frame: 缩放后的图像 (用于推理)
-                frame_id: 当前帧号
+                frame_id: 当前帧号（相对于视频开头的绝对帧号）
         """
-        frame_id = 0
+        # 计算开始和结束对应的帧号
+        start_frame = int(self.start_time * self.fps)
+        end_frame = int(self.end_time * self.fps)
+        
+        # 跳转到起始帧
+        self.cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+        
+        frame_id = start_frame
         while True:
             ret, frame = self.cap.read()
             if not ret:
+                break
+            
+            # 如果超过了结束帧，停止处理
+            if frame_id >= end_frame:
                 break
             
             processed_frame = frame

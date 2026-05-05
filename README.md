@@ -28,7 +28,7 @@
 | 模块 | 技术 | 功能 |
 |------|------|------|
 | **运动员检测** | YOLOv8-Nano | 实时检测场地上运动员位置和数量 |
-| **羽毛球追踪** | TrackNet V2 | 追踪羽毛球飞行轨迹，输出球坐标和置信度 |
+| **羽毛球追踪** | TrackNet V3 | 追踪羽毛球飞行轨迹，输出球坐标和置信度 |
 | **音频分析** | Librosa + 自定义算法 | 检测击球声和欢呼声事件 |
 | **回合决策** | 多特征融合算法 | 综合视觉和音频特征，识别精彩回合 |
 | **视频剪辑** | MoviePy + OpenCV | 生成调试预览和高光集锦视频 |
@@ -87,10 +87,12 @@ python src/core/main.py <视频路径> --max-frames 1000 --save-screenshots
 
 | 参数 | 类型 | 说明 | 默认值 |
 |------|------|------|--------|
+| `--model-version` | int | TrackNet 模型版本: `1` 或 `3` | `1` |
 | `--camera-pos` | 可选 | 摄像机位置: `center` / `left` / `right` | `center` |
 | `--save-screenshots` | 标志 | 保存羽毛球检测截图到 `debug_screenshots/` | 关闭 |
 | `--max-frames` | int | 仅处理前 N 帧（调试用） | 全部 |
 | `--start-time` | float | 从第 N 秒开始处理 | `0` |
+| `--end-time` | float | 处理到第 N 秒停止 | 视频末尾 |
 | `--skip-frames` | int | 跳过开头前 N 帧 | `0` |
 
 ## 📋 运行示例
@@ -107,6 +109,12 @@ python src/core/main.py video.mp4 --max-frames 1000 --save-screenshots
 
 # 分段处理: 从第60秒开始
 python src/core/main.py video.mp4 --start-time 60 --generate-video
+
+# 指定时间范围: 只处理第60秒到第300秒（1分钟到5分钟之间）的内容
+python src/core/main.py video.mp4 --start-time 60 --end-time 300 --generate-video
+
+# 使用 TrackNet V3 模型
+python src/core/main.py video.mp4 --model-version 3 --gpu --generate-video
 
 # 完整功能: GPU + 自定义输出 + 截图调试 + 生成视频
 python src/core/main.py match.mp4 --gpu --generate-video --output my_result --save-screenshots
@@ -183,66 +191,3 @@ badminton_cutter/
 | **GPU** | 无需独立显卡 | NVIDIA RTX 3060+ |
 | **RAM** | 8 GB | 16 GB |
 | **存储** | 500 MB (模型) | 500 MB (模型) |
-
-## ⚠️ 常见问题
-
-1. **TrackNet 检测效果差**: 可能是视频分辨率或拍摄角度不匹配，请参考 [docs/troubleshooting_tracknet.md](docs/troubleshooting_tracknet.md)
-2. **内存不足**: 使用 `--max-frames` 限制处理帧数，或关闭 `--preview`
-3. **视频合成失败**: 确保已安装 ffmpeg，检查 `ffmpeg -version` 是否可用
-4. **GPU 模式报错**: 确认 NVIDIA 驱动正常，CUDA 版本与 PyTorch 匹配
-5. **静态物体误检测**: 系统内置静态过滤器，如仍有问题可调整 `static_filter.py` 中的阈值参数
-6. **音频检测不准确**: 确保视频包含音频轨道，可检查 `debug_frames.csv` 中的音频事件数据
-
-## 🔧 开发指南
-
-### 本地开发环境
-
-```bash
-# 安装依赖
-pip install -r requirements.txt
-
-# 下载模型
-python setup_models.py
-
-# 运行测试
-python src/core/main.py test_video.mp4 --max-frames 100
-```
-
-### 调试技巧
-
-- 使用 `--save-screenshots` 保存检测帧，可视化查看检测效果
-- 查看 `debug_frames.csv` 分析逐帧数据
-- 使用 `--max-frames` 限制处理帧数进行快速测试
-- 查看 `debug_preview.mp4` 中的可视化标记
-
-## 📝 更新日志
-
-### v1.0.0 (2026-04)
-- 初始版本发布
-- 支持 YOLOv8n 运动员检测
-- 支持 TrackNet V2 羽毛球追踪
-- 支持音频事件检测
-- 支持 GPU/CPU 双模式运行
-- 内置自检报告功能
-
-## 🤝 贡献指南
-
-欢迎提交 Issue 和 Pull Request！
-
-1. Fork 本仓库
-2. 创建特性分支 (`git checkout -b feature/AmazingFeature`)
-3. 提交更改 (`git commit -m 'Add some AmazingFeature'`)
-4. 推送到分支 (`git push origin feature/AmazingFeature`)
-5. 提交 Pull Request
-
-## 📜 许可证
-
-[MIT License](LICENSE)
-
-## 🙏 致谢
-
-*   [Ultralytics YOLOv8](https://github.com/ultralytics/ultralytics) - 运动员检测
-*   [TrackNetV2](https://github.com/ChgygLin/TrackNetV2-pytorch) - 羽毛球追踪网络
-*   [MoviePy](https://github.com/Zulko/moviepy) - 视频处理库
-*   [Librosa](https://librosa.org/) - 音频分析库
-*   [OpenCV](https://opencv.org/) - 计算机视觉库

@@ -38,16 +38,22 @@ class RallyAnalyzer:
         ball_detected_count = sum(1 for e in look_ahead if e['ball_pos'] is not None)
         return (ball_detected_count / len(look_ahead)) < 0.1 # 丢球阈值
 
-    def analyze_v3(self, video_events):
+    def analyze_v3(self, video_events, fps=30.0):
         """
         专为 TrackNet V3 优化的视觉状态机
+        引入 fps 参数以解决不同视频率下的时间阈值漂移问题
         """
         rallies = []
         active_start_time = None
         
-        # 内部计数器
+        # --- 动态阈值计算 ---
+        still_threshold_frames = int(2.0 * fps)    # 2秒静止判定
+        grace_threshold_frames = int(0.33 * fps)   # 约0.33秒的人员丢失容错 (原10帧@30fps)
+        look_ahead_frames = int(1.4 * fps)         # 1.2秒的死球观察期 
+        
+        # 内部计数器重置
         self.player_still_frames = 0
-        self.player_lost_grace = 0 # 容错计数器
+        self.player_lost_grace = 0 
         self.current_state = self.STATE_IDLE
         
         for i, event in enumerate(video_events):
@@ -59,44 +65,41 @@ class RallyAnalyzer:
             # --- 1. 球员静止判定 (逻辑优化) ---
             if player_count >= 2:
                 self.player_still_frames += 1
-                self.player_lost_grace = 0 # 重置容错
+                self.player_lost_grace = 0 
             else:
-                # 如果人丢了，给 10 帧的容错时间，不立即重置 player_still_frames
+                # 使用基于 FPS 的容错时间，不立即重置计数器[cite: 8]
                 self.player_lost_grace += 1
-                if self.player_lost_grace > 10: 
+                if self.player_lost_grace > grace_threshold_frames: 
                     self.player_still_frames = 0
             
             # --- 2. 状态机切换 ---
             
-            # IDLE -> LOCKED: 满足 2 秒静止
+            # IDLE -> LOCKED: 满足动态计算的静止秒数[cite: 8]
             if self.current_state == self.STATE_IDLE:
-                if self.player_still_frames > 60: # 30FPS * 2s
+                if self.player_still_frames > still_threshold_frames:
                     self.current_state = self.STATE_LOCKED
                     # print(f"[Debug] {t:.2f}s: State -> LOCKED (Players Ready)")
 
-            # LOCKED -> ACTIVE: 检测到起球 (速度突变)
+            # LOCKED -> ACTIVE: 检测到起球 (速度突变)[cite: 8]
             elif self.current_state == self.STATE_LOCKED:
-                # 触发条件：球出现且速度大于阈值
                 if ball_pos and ball_speed > 15: 
                     self.current_state = self.STATE_ACTIVE
                     active_start_time = t - 1.0 # 包含 1s 准备动作
                     # print(f"[Debug] {t:.2f}s: State -> ACTIVE (Serve Detected)")
                 
-                # 如果球员动了（静止中断），回退到 IDLE
                 elif self.player_still_frames == 0:
                     self.current_state = self.STATE_IDLE
 
-            # ACTIVE -> IDLE: 判定回合结束
+            # ACTIVE -> IDLE: 判定回合结束[cite: 8]
             elif self.current_state == self.STATE_ACTIVE:
-                # 判定死球：未来 1 秒内基本没球，且当前帧也没球 (或球速极低)
+                # 判定死球：未来一段时间内基本没球[cite: 8]
                 if ball_pos is None or ball_speed < 2:
-                    if self._check_ball_lost(video_events, i, duration=30):
-                        end_time = t + 0.5 # 稍微延后一点点
+                    # 使用基于 FPS 的观察长度[cite: 8]
+                    if self._check_ball_lost(video_events, i, duration=look_ahead_frames):
+                        end_time = t + 0.5 
                         
-                        # 过滤太短的回合 (比如发球失误，不到 1.5 秒)
                         if end_time - active_start_time > 1.5:
                             rallies.append(ClipSegment(active_start_time, end_time, score=1.0))
-                            # print(f"[Debug] {t:.2f}s: Rally Found: {active_start_time:.2f} - {end_time:.2f}")
                         
                         self.current_state = self.STATE_IDLE
                         self.player_still_frames = 0
@@ -104,24 +107,39 @@ class RallyAnalyzer:
         return self._merge_overlapping_rallies(rallies)
         
     def initialize_debug_writer(self, csv_path: str, hit_events: List[float]):
+        """
+        初始化调试 CSV 写入器。
+        
+        Args:
+            csv_path: CSV 文件路径
+            hit_events: 击球事件时间列表
+        """
         self.debug_csv_path = csv_path
-        self.hit_map = {int(t*30): True for t in hit_events}
+        self.hit_map = {int(t * 30): True for t in hit_events}
+        
+        # CSV 表头，与 write_debug_frame 方法的输出列保持一致
+        header = "frame_id,time,ball_x,ball_y,ball_conf,player_count,is_hit,ball_speed,state,still_frames\n"
         
         try:
-            self.debug_file = open(self.debug_csv_path, "w", buffering=1) # Line buffered
-            self.debug_file.write("frame_id,time,ball_x,ball_y,ball_conf,player_count,is_hit\n")
+            self.debug_file = open(self.debug_csv_path, "w", buffering=1)  # Line buffered
+            self.debug_file.write(header)
             print(f"[RallyAnalyzer] Debug CSV initialized at {self.debug_csv_path}")
         except PermissionError:
             import time
             self.debug_csv_path = f"debug_frames_{int(time.time())}.csv"
             print(f"[RallyAnalyzer] Warning: Permission Denied. Saving to {self.debug_csv_path} instead.")
-            try:
-                self.debug_file = open(self.debug_csv_path, "w", buffering=1)
-                self.debug_file.write("frame_id,time,ball_x,ball_y,ball_conf,player_count,is_hit\n")
-            except Exception as e:
-                print(f"[RallyAnalyzer] Error initializing debug CSV: {e}")
-        except Exception as e:        
-             print(f"[RallyAnalyzer] Error initializing debug CSV: {e}")
+            self._write_csv_header()
+        except Exception as e:
+            print(f"[RallyAnalyzer] Error initializing debug CSV: {e}")
+    
+    def _write_csv_header(self):
+        """内部方法：写入 CSV 表头，减少重复代码"""
+        header = "frame_id,time,ball_x,ball_y,ball_conf,player_count,is_hit,ball_speed,state,still_frames\n"
+        try:
+            self.debug_file = open(self.debug_csv_path, "w", buffering=1)
+            self.debug_file.write(header)
+        except Exception as e:
+            print(f"[RallyAnalyzer] Error writing CSV header: {e}")
 
     def write_debug_frame(self, event: Dict):
         if self.debug_file:
@@ -131,11 +149,17 @@ class RallyAnalyzer:
                 pos = event['ball_pos']
                 pc = event['player_count']
                 conf = event.get('ball_conf', 0.0)
+                speed = event.get('ball_speed', 0.0)
+
+                # 新增：记录当前状态机状态和计数器
+                state = self.current_state 
+                still_frames = self.player_still_frames
                 
                 bx, by = pos if pos else (-1, -1)
                 is_hit = 1 if int(t*30) in self.hit_map else 0
-                
-                self.debug_file.write(f"{fid},{t:.3f},{bx},{by},{conf:.4f},{pc},{is_hit}\n")
+
+                # 扩展 CSV 列：增加 speed, state, still_frames
+                self.debug_file.write(f"{fid},{t:.3f},{bx},{by},{conf:.4f},{pc},{is_hit},{speed:.2f},{state},{still_frames}\n")
             except Exception as e:
                 print(f"[RallyAnalyzer] Error writing debug frame: {e}")
 
